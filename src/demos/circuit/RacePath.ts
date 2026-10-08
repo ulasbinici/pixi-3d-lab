@@ -9,43 +9,65 @@ export type PathSample = {
   s: number;
 };
 
+function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return 0.5 * ((2 * p1) + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+}
+
 /**
- * Dense centerline for the race loop. Arcade NPCs chase a lookahead sample
- * (pure pursuit) instead of snapping cell-to-cell.
+ * Dense centerline for the race loop. Corner cells are blended with Catmull-Rom
+ * so the racing line sweeps instead of snapping through hard elbows.
  */
 export class RacePath {
   public readonly samples: PathSample[] = [];
   public readonly length: number;
 
-  constructor(loop: Cell[], cellSize: number, step = cellSize * 0.35) {
+  constructor(loop: Cell[], cellSize: number, step = cellSize * 0.28) {
     const n = loop.length;
     if (n < 3) {
       this.length = 0;
       return;
     }
 
-    const corners: { x: number; z: number }[] = [];
+    const pts: { x: number; z: number }[] = [];
     for (let i = 0; i < n; i++) {
-      corners.push(cellWorld(loop[i]!, cellSize));
+      pts.push(cellWorld(loop[i]!, cellSize));
     }
 
     let s = 0;
     for (let i = 0; i < n; i++) {
-      const a = corners[i]!;
-      const b = corners[(i + 1) % n]!;
-      const dx = b.x - a.x;
-      const dz = b.z - a.z;
-      const segLen = Math.hypot(dx, dz);
-      if (segLen < 1e-4) continue;
+      const p0 = pts[(i - 1 + n) % n]!;
+      const p1 = pts[i]!;
+      const p2 = pts[(i + 1) % n]!;
+      const p3 = pts[(i + 2) % n]!;
 
-      const count = Math.max(1, Math.ceil(segLen / step));
+      // Estimate segment length along the spline for step count.
+      let est = 0;
+      let lx = p1.x;
+      let lz = p1.z;
+      for (let k = 1; k <= 8; k++) {
+        const t = k / 8;
+        const x = catmullRom(p0.x, p1.x, p2.x, p3.x, t);
+        const z = catmullRom(p0.z, p1.z, p2.z, p3.z, t);
+        est += Math.hypot(x - lx, z - lz);
+        lx = x;
+        lz = z;
+      }
+
+      const count = Math.max(2, Math.ceil(est / step));
       for (let k = 0; k < count; k++) {
         const t = k / count;
-        const x = a.x + dx * t;
-        const z = a.z + dz * t;
+        const x = catmullRom(p0.x, p1.x, p2.x, p3.x, t);
+        const z = catmullRom(p0.z, p1.z, p2.z, p3.z, t);
+        const x2 = catmullRom(p0.x, p1.x, p2.x, p3.x, Math.min(1, t + 1 / count));
+        const z2 = catmullRom(p0.z, p1.z, p2.z, p3.z, Math.min(1, t + 1 / count));
+        const dx = x2 - x;
+        const dz = z2 - z;
         const yaw = Math.atan2(dx, dz);
+        const ds = Math.hypot(dx, dz);
         this.samples.push({ x, z, yaw, s });
-        s += segLen / count;
+        s += ds;
       }
     }
 
@@ -86,10 +108,16 @@ export class RacePath {
       }
       if (remaining <= ds) {
         const t = remaining / ds;
+        let yaw = cur.yaw + (next.yaw - cur.yaw) * t;
+        // Unwrap yaw blend.
+        let dy = next.yaw - cur.yaw;
+        while (dy > Math.PI) dy -= Math.PI * 2;
+        while (dy < -Math.PI) dy += Math.PI * 2;
+        yaw = cur.yaw + dy * t;
         return {
           x: cur.x + (next.x - cur.x) * t,
           z: cur.z + (next.z - cur.z) * t,
-          yaw: cur.yaw,
+          yaw,
           s: (cur.s + remaining) % this.length,
         };
       }

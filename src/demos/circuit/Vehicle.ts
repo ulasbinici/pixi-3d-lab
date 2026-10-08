@@ -185,6 +185,8 @@ export class Vehicle {
   public handbrake = false;
   public driftIntensity = 0;
   public paintColor = PAINT_PALETTE[0]!;
+  /** Seconds left of soft arcade launch (rocket hit). */
+  public launchT = 0;
 
   public readonly physics: PhysicsWorld;
   public readonly body: RigidBody;
@@ -247,6 +249,7 @@ export class Vehicle {
     this.inputZ = 0;
     this.handbrake = false;
     this.driftIntensity = 0;
+    this.launchT = 0;
     this._bodyPitch = 0;
     this._bodyRoll = 0;
 
@@ -279,6 +282,32 @@ export class Vehicle {
     if (this._paintAtlas) bakePaintColor(this._paintAtlas, color);
   }
 
+  /**
+   * Soft arcade pop — pops the sphere up, kills drive speed, light tumble.
+   * Gravity + landing bring it back; no hard reset.
+   */
+  public hitLaunch(strength = 1): void {
+    const s = clamp(strength, 0.5, 1.6);
+    this.linearSpeed *= 0.18;
+    this.angularSpeed *= 0.2;
+    this.launchT = Math.max(this.launchT, 1.15 * s);
+
+    const fx = Math.sin(this.yaw);
+    const fz = Math.cos(this.yaw);
+    const side = (Math.random() - 0.5) * 5 * s;
+    const forward = (2 + Math.random() * 3) * s;
+    rigidBody.setLinearVelocity(this.physics.world, this.body, [
+      fx * forward + Math.cos(this.yaw) * side,
+      6.2 * s + Math.random() * 1.4,
+      fz * forward - Math.sin(this.yaw) * side,
+    ]);
+    rigidBody.setAngularVelocity(this.physics.world, this.body, [
+      (Math.random() - 0.5) * 8 * s,
+      (Math.random() - 0.5) * 4 * s,
+      (Math.random() - 0.5) * 8 * s,
+    ]);
+  }
+
   private _setupBodyPaint(root: Container3D): void {
     const visit = (node: Container3D): void => {
       const label = node.label?.toLowerCase() ?? '';
@@ -305,9 +334,12 @@ export class Vehicle {
   }
 
   public update(dt: number, input: ControlsState): void {
-    this.inputX = input.x;
-    this.inputZ = input.z;
-    this.handbrake = input.handbrake;
+    this.launchT = Math.max(0, this.launchT - dt);
+    // While airborne from a hit, mute driver input — soft float then land.
+    const air = this.launchT > 0 && this.spherePos.y > 0.75;
+    this.inputX = air ? 0 : input.x;
+    this.inputZ = air ? 0 : input.z;
+    this.handbrake = air ? false : input.handbrake;
 
     if (input.touchActive && (this.inputX !== 0 || this.inputZ !== 0)) {
       const targetAngle = Math.atan2(this.inputX, this.inputZ);
@@ -359,7 +391,8 @@ export class Vehicle {
     // mirroring the original three.js port. _right is world-X rotated by yaw.
     const rightX = Math.cos(this.yaw);
     const rightZ = -Math.sin(this.yaw);
-    const drive = this.linearSpeed * 100 * dt;
+    const driveMul = this.launchT > 0 ? 0.15 : 1;
+    const drive = this.linearSpeed * 100 * dt * driveMul;
     const body = this.body;
     const angvel = body.motionProperties.angularVelocity;
 
@@ -425,7 +458,9 @@ export class Vehicle {
     _qBodyTmp.copyFrom(this._bodyInitQuat).multiply(_qPitch).multiply(_qRoll);
     this.bodyNode.quaternion.copyFrom(_qBodyTmp);
 
-    this.bodyNode.position.y = lerp(this.bodyNode.position.y, 0.3, dt * 5);
+    // Arcade bounce: lift the visual body a bit while launched.
+    const launchLift = this.launchT > 0 ? Math.min(0.55, this.launchT * 0.45) : 0;
+    this.bodyNode.position.y = lerp(this.bodyNode.position.y, 0.3 + launchLift, dt * 5);
   }
 
   private _updateWheels(dt: number): void {

@@ -87,10 +87,87 @@ export function generateRaceLoop(
     if (next) loop = next;
   }
 
+  // Spread many 90° kinks into longer outer sweeps; a few stay sharp.
+  loop = softenCorners(loop, cols, rows, seed);
+
   // Rotate so "start" (finish line) sits on a long straight if possible.
   loop = preferStraightStart(loop);
 
   return { loop, seed };
+}
+
+/**
+ * Widen most sharp corners into a 2-cell outer dogleg (longer, softer arc).
+ * ~25% of corners stay tight for variety.
+ */
+function softenCorners(loop: Cell[], cols: number, rows: number, seed: number): Cell[] {
+  const rng = mulberry32(seed ^ 0x5f3759df);
+  let result = loop.map((c) => ({ x: c.x, z: c.z }));
+
+  // Work back-to-front so splice indices stay valid.
+  const cornerIdx: number[] = [];
+  const n0 = result.length;
+  for (let i = 0; i < n0; i++) {
+    const prev = result[(i - 1 + n0) % n0]!;
+    const cur = result[i]!;
+    const next = result[(i + 1) % n0]!;
+    if (dirBetween(prev, cur) !== dirBetween(cur, next)) cornerIdx.push(i);
+  }
+
+  for (const i of cornerIdx.sort((a, b) => b - a)) {
+    if (rng() < 0.25) continue; // keep some hairpins
+    const widened = tryWidenCorner(result, i, cols, rows);
+    if (widened) result = widened;
+  }
+  return result;
+}
+
+/**
+ * Replace a single 90° elbow with a longer outer sweep:
+ *   … → cur → next → after → …
+ * becomes
+ *   … → cur → p1 → p2 → p3 → after → …
+ * where p1 continues inbound one cell, then two steps along the exit dir.
+ */
+function tryWidenCorner(loop: Cell[], i: number, cols: number, rows: number): Cell[] | null {
+  const n = loop.length;
+  if (n < 8) return null;
+
+  const prev = loop[(i - 1 + n) % n]!;
+  const cur = loop[i]!;
+  const next = loop[(i + 1) % n]!;
+  const after = loop[(i + 2) % n]!;
+  const inDir = dirBetween(prev, cur);
+  const outDir = dirBetween(cur, next);
+  if (inDir === outDir) return null;
+  // Only ordinary 90° turns (skip U-turns).
+  if (outDir === opposite(inDir)) return null;
+  if (dirBetween(next, after) !== outDir) return null;
+
+  const [ix, iz] = DIR_DELTA[inDir]!;
+  const [ox, oz] = DIR_DELTA[outDir]!;
+  const p1: Cell = { x: cur.x + ix, z: cur.z + iz };
+  const p2: Cell = { x: p1.x + ox, z: p1.z + oz };
+  const p3: Cell = { x: p2.x + ox, z: p2.z + oz };
+
+  const occupied = new Set(loop.map(key));
+  // next is removed from the path; allow overwriting it.
+  occupied.delete(key(next));
+
+  for (const p of [p1, p2, p3]) {
+    if (p.x < 0 || p.z < 0 || p.x >= cols || p.z >= rows) return null;
+    if (occupied.has(key(p))) return null;
+  }
+  // Must reconnect cleanly onto `after`.
+  if (Math.abs(p3.x - after.x) + Math.abs(p3.z - after.z) !== 1) return null;
+
+  // Replace [cur, next] with [cur, p1, p2, p3] (cur kept; next dropped).
+  const nextI = (i + 1) % n;
+  if (nextI > i) {
+    return [...loop.slice(0, i + 1), p1, p2, p3, ...loop.slice(i + 2)];
+  }
+  // Wrap: next is index 0, after is 1, cur is last.
+  return [p3, ...loop.slice(1), p1, p2];
 }
 
 /** @deprecated use generateRaceLoop */

@@ -22,9 +22,9 @@ import { PhysicsWorld } from './Physics';
 import { MAX_SPEED, Vehicle } from './Vehicle';
 
 const ASSET = {
-  truck: '/assets/racing/vehicle-truck-yellow.glb',
-  forest: '/assets/racing/decoration-forest.glb',
-  empty: '/assets/racing/decoration-empty.glb',
+  truck: '/assets/racing/models/vehicle-truck-yellow.glb',
+  forest: '/assets/racing/models/decoration-forest.glb',
+  empty: '/assets/racing/models/decoration-empty.glb',
 };
 
 const HEADLIGHT_INTENSITY = 160;

@@ -34,27 +34,33 @@ import { botMapColor, Minimap } from './Minimap';
 import type { WallSpec } from './Physics';
 import { PhysicsWorld } from './Physics';
 import { gridSlot, RacePath } from './RacePath';
+import { GaugeHud } from './GaugeHud';
+import { MissileHud } from './MissileHud';
+import { MissileSystem } from './Missiles';
 import { SmokeFX } from './SmokeFX';
 import { TireMarks } from './TireMarks';
 import { MAX_SPEED, Vehicle } from './Vehicle';
 
 const CELL = 7.5;
-const COLS = 11;
-const ROWS = 9;
+/** Slightly larger field so soft outer sweeps have room. */
+const COLS = 13;
+const ROWS = 11;
 const HEADLIGHT_INTENSITY = 140;
 const HEADLIGHT_FILL = 22;
 const MAX_BOTS = 5;
 
 const ASSET = {
-  truck: '/assets/racing/vehicle-truck-yellow.glb',
-  forest: '/assets/racing/decoration-forest.glb',
-  empty: '/assets/racing/decoration-empty.glb',
-  straight: '/assets/racing/track-straight.glb',
-  corner: '/assets/racing/track-corner.glb',
-  finish: '/assets/racing/track-finish.glb',
+  truck: '/assets/racing/models/vehicle-truck-yellow.glb',
+  forest: '/assets/racing/models/decoration-forest.glb',
+  empty: '/assets/racing/models/decoration-empty.glb',
+  straight: '/assets/racing/models/track-straight.glb',
+  corner: '/assets/racing/models/track-corner.glb',
+  finish: '/assets/racing/models/track-finish.glb',
   smoke: '/assets/racing/sprites/smoke.png',
   /** One consistent skid stamp — don't shuffle variants along the trail. */
   mark: '/assets/racing/sprites/marks/1.png',
+  /** Remeshed from missle/ icon OBJ (raw file is ~900k tris). */
+  missile: '/assets/racing/models/missile.glb',
 };
 
 type Coin = {
@@ -515,9 +521,19 @@ export async function runCircuit(ctx: DemoContext): Promise<DemoHandle> {
     Assets.load<Scene3DSource>(ASSET.finish),
     Assets.load<Texture>(ASSET.smoke),
     Assets.load<Texture>(ASSET.mark),
+    Assets.load<Scene3DSource>(ASSET.missile),
   ]);
-  const [truckSrc, forestSrc, emptySrc, straightSrc, cornerSrc, finishSrc, smokeTex, markTex] =
-    sources;
+  const [
+    truckSrc,
+    forestSrc,
+    emptySrc,
+    straightSrc,
+    cornerSrc,
+    finishSrc,
+    smokeTex,
+    markTex,
+    missileSrc,
+  ] = sources;
 
   const sun = new DirectionalLight({
     color: 0xfff1dc,
@@ -609,6 +625,16 @@ export async function runCircuit(ctx: DemoContext): Promise<DemoHandle> {
   let coinsLeft = coins.length;
   let coinsTaken = 0;
 
+  // Missile pickups — staggered vs coins so both litter the racing line.
+  const missileSpots: { x: number; z: number }[] = [];
+  for (let i = 2; i < loop.length; i += 3) {
+    const cell = loop[i]!;
+    const { x, z } = cellWorld(cell, CELL);
+    // Slight lateral offset so they don't sit exactly on coin centers.
+    const side = i % 2 === 0 ? 1.1 : -1.1;
+    missileSpots.push({ x: x + side * 0.35, z: z + side * 0.15 });
+  }
+
   const finish = pieces[0]!;
   const spawnWorld = cellWorld(finish.cell, CELL);
   const spawnYaw = finish.outDir === 0 ? Math.PI : finish.outDir === 1 ? Math.PI / 2 : finish.outDir === 2 ? 0 : -Math.PI / 2;
@@ -645,6 +671,9 @@ export async function runCircuit(ctx: DemoContext): Promise<DemoHandle> {
   view3d.root.addChild(vehicle.container);
   const smokeFX = new SmokeFX(view3d.root, vehicle, smokeTex);
   const tireMarks = new TireMarks(view3d.root, [markTex]);
+  const missiles = new MissileSystem(view3d.root, missileSrc, smokeTex, missileSpots);
+  const missileHud = new MissileHud();
+  const gaugeHud = new GaugeHud();
   const playerHeadlamps = attachHeadlamps(vehicle.container, 1);
 
   type BotEntry = { vehicle: Vehicle; ai: BotDriver; headlamps: Headlamp[] };
@@ -726,12 +755,16 @@ export async function runCircuit(ctx: DemoContext): Promise<DemoHandle> {
   const hud = new Container();
   app.stage.addChild(hud);
   const info = new Text({
-    text: `Track ${seed}  ·  WASD  ·  Space  ·  F fuel  ·  B bot  ·  G race  ·  T time  ·  Esc`,
+    text: `Track ${seed}  ·  WASD  ·  Space  ·  Q rocket  ·  F fuel  ·  B bot  ·  G race  ·  Esc`,
     style: { fontFamily: 'IBM Plex Mono, monospace', fontSize: 13, fill: 0xffffff },
   });
   const coinText = new Text({
     text: `Coins ${coinsTaken}/${coins.length}`,
     style: { fontFamily: 'IBM Plex Mono, monospace', fontSize: 18, fill: 0xffd24a },
+  });
+  const missileText = new Text({
+    text: `Rockets ${missiles.ammo}`,
+    style: { fontFamily: 'IBM Plex Mono, monospace', fontSize: 16, fill: 0x8dff4a },
   });
   const timeText = new Text({
     text: 'Day',
@@ -748,7 +781,17 @@ export async function runCircuit(ctx: DemoContext): Promise<DemoHandle> {
     style: { fontFamily: 'IBM Plex Mono, monospace', fontSize: 16, fill: 0x7ec8ff },
   });
   const minimap = new Minimap(loop, CELL, COLS, ROWS, pit);
-  hud.addChild(info, coinText, timeText, raceText, fuelText, minimap.root);
+  hud.addChild(
+    info,
+    coinText,
+    missileText,
+    timeText,
+    raceText,
+    fuelText,
+    minimap.root,
+    missileHud.root,
+    gaugeHud.root,
+  );
 
   const gaugeEl = document.createElement('div');
   gaugeEl.id = 'circuit-gauges';
@@ -778,10 +821,12 @@ export async function runCircuit(ctx: DemoContext): Promise<DemoHandle> {
   const layoutHud = (): void => {
     info.position.set(20, app.screen.height - 34);
     coinText.position.set(20, 20);
-    timeText.position.set(20, 48);
-    raceText.position.set(20, 72);
-    fuelText.position.set(20, 96);
+    missileText.position.set(20, 44);
+    timeText.position.set(20, 70);
+    raceText.position.set(20, 94);
+    fuelText.position.set(20, 118);
     minimap.layout(app.screen.width, app.screen.height);
+    gaugeHud.layout(app.screen.width, app.screen.height);
   };
   layoutHud();
 
@@ -809,6 +854,9 @@ export async function runCircuit(ctx: DemoContext): Promise<DemoHandle> {
     dayMode: 'auto' as 'auto' | 'day' | 'night',
     pitVisible: true,
     canopyColor: 'blue' as 'blue' | 'red',
+    missiles: missiles.ammo,
+    lockRange: missiles.lockRange,
+    gaugeHud: false,
     addBot: () => addBot(),
     startRace: () => startRace(),
     resetRace: () => resetRace(),
@@ -886,6 +934,37 @@ export async function runCircuit(ctx: DemoContext): Promise<DemoHandle> {
     .onChange((v: 'blue' | 'red') => pitStation?.setCanopyColor(v));
   pitFolder.open();
 
+  const weaponsFolder = gui.addFolder('Weapons');
+  weaponsFolder
+    .add(guiState, 'missiles', 0, 20, 1)
+    .name('Missiles')
+    .listen()
+    .onChange((v: number) => {
+      missiles.ammo = Math.round(v);
+      missileText.text = `Rockets ${missiles.ammo}`;
+    });
+  weaponsFolder
+    .add(guiState, 'lockRange', 8, 40, 0.5)
+    .name('Lock range')
+    .onChange((v: number) => {
+      missiles.lockRange = v;
+    });
+  weaponsFolder.open();
+
+  const hudFolder = gui.addFolder('HUD');
+  const applyGaugeHud = (on: boolean): void => {
+    gaugeHud.visible = on;
+    // Graphical meters replace the flat fuel / FPV text gauges.
+    fuelText.visible = !on;
+    if (on) gaugeEl.style.display = 'none';
+    else if (driveCamera.mode === 'fpv') gaugeEl.style.display = 'flex';
+  };
+  hudFolder
+    .add(guiState, 'gaugeHud')
+    .name('Graphic meters')
+    .onChange((v: boolean) => applyGaugeHud(v));
+  hudFolder.open();
+
   const raceFolder = gui.addFolder('Race');
   raceFolder.add(guiState, 'addBot').name('Add bot (B)');
   raceFolder.add(guiState, 'startRace').name('Start race (G)');
@@ -902,7 +981,7 @@ export async function runCircuit(ctx: DemoContext): Promise<DemoHandle> {
   const onKey = (e: KeyboardEvent): void => {
     if (e.code === 'KeyC') {
       const mode = driveCamera.toggle();
-      gaugeEl.style.display = mode === 'fpv' ? 'flex' : 'none';
+      gaugeEl.style.display = !guiState.gaugeHud && mode === 'fpv' ? 'flex' : 'none';
       timeText.text = `${timeText.text.split(' · ')[0]} · cam ${mode}`;
     }
     if (e.code === 'KeyL') {
@@ -911,6 +990,22 @@ export async function runCircuit(ctx: DemoContext): Promise<DemoHandle> {
     }
     if (e.code === 'KeyT') {
       cycleDayMode();
+    }
+    if (e.code === 'KeyQ') {
+      const fired = missiles.tryFire(vehicle);
+      if (fired === 'guided' || fired === 'early' || fired === 'dumb') {
+        missileText.text = `Rockets ${missiles.ammo}`;
+        raceText.text =
+          fired === 'guided'
+            ? 'Guided hit locked — re-acquire'
+            : fired === 'early'
+              ? 'Early fire — may miss · re-acquire'
+              : 'No lock — dumb fire · re-acquire';
+        fuelHintT = 1.5;
+      } else if (fired === 'empty') {
+        raceText.text = 'No rockets — grab the glowing missiles on track';
+        fuelHintT = 2;
+      }
     }
     if (e.code === 'KeyF') {
       if (!pit || !inPitZone(pit, vehicle.spherePos.x, vehicle.spherePos.z)) {
@@ -957,6 +1052,14 @@ export async function runCircuit(ctx: DemoContext): Promise<DemoHandle> {
     }
     smokeFX.update(app.ticker, vehicle, input.z);
     tireMarks.update(dt, vehicle);
+    missiles.update(dt, app.ticker, vehicle, pack, view3d, app.screen.width, app.screen.height);
+    guiState.missiles = missiles.ammo;
+    const lockSnap = missiles.getLockSnapshot();
+    missileText.text =
+      missiles.ammo > 0 && lockSnap.progress > 0.05
+        ? `Rockets ${missiles.ammo}  ·  ${lockSnap.locked ? 'LOCK' : `${Math.round(lockSnap.progress * 100)}%`}`
+        : `Rockets ${missiles.ammo}`;
+    missileHud.update(dt, view3d, driveCamera.mode, lockSnap, app.screen.width, app.screen.height);
 
     // Day / night — auto cycles; day/night/scrub lock or drive the clock.
     if (dayMode === 'auto') {
@@ -1034,10 +1137,16 @@ export async function runCircuit(ctx: DemoContext): Promise<DemoHandle> {
     }
     if (fuelHintT > 0) fuelHintT -= dt;
 
-    if (driveCamera.mode === 'fpv') {
+    const rpmNorm = Math.min(
+      1,
+      Math.abs(vehicle.linearSpeed) / MAX_SPEED * 0.85 + Math.max(0, input.z) * 0.2 + (vehicle.handbrake ? 0.08 : 0),
+    );
+    if (!guiState.gaugeHud && driveCamera.mode === 'fpv') {
       gSpd.textContent = String(Math.round(speedNorm * 180));
-      gRpm.textContent = String(Math.round(800 + speedNorm * 5200 + Math.abs(input.z) * 400));
+      gRpm.textContent = String(Math.round(800 + rpmNorm * 7200));
+      gFuel.textContent = String(Math.round(fuel));
     }
+    gaugeHud.update(dt, speedNorm, rpmNorm, fuel);
 
     driveCamera.update(dt, vehicle.container.position, vehicle.modelVelocity, vehicle.yaw);
     audio.update(dt, speedNorm, input.z, vehicle.driftIntensity);
