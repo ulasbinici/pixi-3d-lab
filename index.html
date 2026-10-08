@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PixiJS 3D Lab</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Syne:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --ink: #e8f0ff;
+        --muted: #9db0cc;
+        --panel: rgba(8, 12, 22, 0.78);
+        --line: rgba(120, 190, 255, 0.28);
+        --accent: #5ce1ff;
+        --hot: #ff4d8d;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #05070d;
+        color: var(--ink);
+        font-family: 'Syne', sans-serif;
+      }
+
+      canvas {
+        display: block;
+      }
+
+      body:not(.in-demo) canvas {
+        opacity: 0.35;
+        filter: saturate(0.7);
+      }
+
+      #menu {
+        position: fixed;
+        inset: 0;
+        z-index: 20;
+        display: grid;
+        place-items: center;
+        padding: 32px 20px;
+        background:
+          radial-gradient(ellipse at 20% 10%, rgba(92, 225, 255, 0.14), transparent 42%),
+          radial-gradient(ellipse at 80% 80%, rgba(255, 77, 141, 0.12), transparent 45%),
+          linear-gradient(160deg, rgba(5, 7, 13, 0.55), rgba(5, 7, 13, 0.82));
+      }
+
+      #menu[hidden] {
+        display: none;
+      }
+
+      .menu-shell {
+        width: min(720px, 100%);
+      }
+
+      .menu-shell h1 {
+        margin: 0;
+        font-size: clamp(2rem, 5vw, 3.2rem);
+        font-weight: 800;
+        letter-spacing: -0.04em;
+        text-shadow: 0 0 28px rgba(92, 225, 255, 0.28);
+      }
+
+      .menu-shell .lead {
+        margin: 12px 0 28px;
+        max-width: 42ch;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--muted);
+      }
+
+      #demo-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .demo-card {
+        width: 100%;
+        text-align: left;
+        padding: 18px 18px 16px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--panel);
+        backdrop-filter: blur(14px);
+        color: var(--ink);
+        cursor: pointer;
+        transition:
+          transform 0.15s ease,
+          border-color 0.15s ease,
+          background 0.15s ease;
+      }
+
+      .demo-card:hover {
+        transform: translateY(-1px);
+        border-color: rgba(92, 225, 255, 0.55);
+        background: rgba(12, 18, 32, 0.88);
+      }
+
+      .demo-card__title {
+        display: block;
+        font-size: 1.2rem;
+        font-weight: 700;
+        margin-bottom: 6px;
+      }
+
+      .demo-card__blurb {
+        display: block;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+        line-height: 1.55;
+        color: var(--muted);
+      }
+
+      .demo-card__tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 12px;
+      }
+
+      .demo-card__tags em {
+        font-style: normal;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        border: 1px solid rgba(92, 225, 255, 0.25);
+        color: var(--accent);
+      }
+
+      #loading {
+        position: fixed;
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 30;
+        padding: 12px 18px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+      }
+
+      #loading[hidden] {
+        display: none;
+      }
+
+      #demo-hud {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 10;
+      }
+
+      #demo-hud[hidden] {
+        display: none;
+      }
+
+      #demo-panel {
+        position: absolute;
+        top: 28px;
+        right: 28px;
+        width: min(240px, calc(100vw - 56px));
+        padding: 14px;
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--panel);
+        backdrop-filter: blur(14px);
+        pointer-events: auto;
+      }
+
+      #demo-panel strong {
+        display: block;
+        margin-bottom: 10px;
+        font-size: 13px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      #demo-panel button {
+        width: 100%;
+        margin: 0 0 8px;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--ink);
+        font: 500 13px/1 'Syne', sans-serif;
+        cursor: pointer;
+      }
+
+      #demo-panel button.on {
+        background: linear-gradient(135deg, rgba(92, 225, 255, 0.22), rgba(255, 77, 141, 0.18));
+        border-color: rgba(255, 77, 141, 0.55);
+      }
+
+      #demo-panel button.ghost {
+        margin-top: 6px;
+        border-style: dashed;
+        color: var(--muted);
+      }
+
+      #demo-status {
+        margin-top: 6px;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      #demo-hint {
+        position: absolute;
+        left: 50%;
+        bottom: 28px;
+        transform: translateX(-50%);
+        padding: 12px 16px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: var(--panel);
+        backdrop-filter: blur(12px);
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 12px;
+        white-space: nowrap;
+        transition: opacity 0.25s ease;
+      }
+
+      @media (max-width: 720px) {
+        #demo-panel {
+          top: auto;
+          bottom: 78px;
+          right: 16px;
+          left: 16px;
+          width: auto;
+        }
+
+        #demo-hint {
+          bottom: 16px;
+          white-space: normal;
+          text-align: center;
+          max-width: calc(100vw - 32px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="menu">
+      <div class="menu-shell">
+        <h1>PixiJS 3D Lab</h1>
+        <p class="lead">Pick a demo. Esc returns here. Circuit builds a fresh race loop each launch.</p>
+        <div id="demo-list"></div>
+      </div>
+    </div>
+
+    <div id="loading" hidden>Loading…</div>
+
+    <div id="demo-hud" hidden>
+      <div id="demo-panel"></div>
+      <div id="demo-status" style="position: absolute; top: 28px; left: 28px"></div>
+      <div id="demo-hint"></div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

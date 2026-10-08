@@ -1,0 +1,27 @@
+{
+  "name": "pixijs-3d-example",
+  "version": "1.0.0",
+  "description": "PixiJS 3D lab — menu of demos (forest drive, neon gallery)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@pixi/3d": "file:vendor/pixi-3d-0.1.0-beta.2.tgz",
+    "crashcat": "^0.0.4",
+    "dat.gui": "^0.7.9",
+    "pixi.js": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/dat.gui": "^0.7.13",
+    "@types/web": "^0.0.358",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.3"
+  }
+}
